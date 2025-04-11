@@ -629,30 +629,17 @@ document.addEventListener('DOMContentLoaded', function () {
         fetch('fetch_notifications.php')
             .then(response => response.json())
             .then(data => {
-                dropdown.innerHTML = '';
+                dropdown.innerHTML = ''; // Clear previous notifications
                 let count = 0;
 
-                if (data.overdue && data.overdue.length > 0) {
-                    count += data.overdue.length;
-                    data.overdue.forEach(item => {
+                if (data.length > 0) {
+                    count = data.length;
+                    data.forEach(notification => {
                         dropdown.innerHTML += `
                             <div style="padding: 5px 0;">
-                                <strong>Overdue:</strong> 
-                                <a href="information.php?target_name=${item.target_name}" style="text-decoration: none; color: inherit;">
-                                    ${item.target_name} (${item.equipment_type})
-                                </a>
-                            </div>`;
-                    });
-                }
-
-                if (data.maintenance && data.maintenance.length > 0) {
-                    count += data.maintenance.length;
-                    data.maintenance.forEach(item => {
-                        dropdown.innerHTML += `
-                            <div style="padding: 5px 0;">
-                                <strong>Maintenance:</strong> 
-                                <a href="information.php?target_name=${item.target_name}" style="text-decoration: none; color: inherit;">
-                                    ${item.target_name} (${item.equipment_type})
+                                ${notification.message}
+                                <a href="information.php?target_name=${notification.target_name}" style="text-decoration: none; color: inherit;">
+                                    ${notification.target_name} (${notification.equipment_type})
                                 </a>
                             </div>`;
                     });

@@ -1,52 +1,68 @@
 <?php
 require 'db_connect.php';
 
-// Ensure notification uniqueness logic based on vehicle ID and type
-function insertNotification($conn, $vehicleId, $type, $message) {
-    $stmt = $conn->prepare("SELECT 1 FROM notifications WHERE vehicle_id = ? AND type = ?");
-    $stmt->bind_param("is", $vehicleId, $type);
+// Ensure notification uniqueness logic based on vehicle ID
+function insertNotification($conn, $vehicleId, $message) {
+    $stmt = $conn->prepare("SELECT 1 FROM notifications WHERE vehicle_id = ?");
+    $stmt->bind_param("i", $vehicleId);
     $stmt->execute();
     $stmt->store_result();
 
     if ($stmt->num_rows === 0) {
-        $insert = $conn->prepare("INSERT INTO notifications (vehicle_id, type, message) VALUES (?, ?, ?)");
-        $insert->bind_param("iss", $vehicleId, $type, $message);
+        $insert = $conn->prepare("INSERT INTO notifications (vehicle_id, message) VALUES (?, ?)");
+        $insert->bind_param("is", $vehicleId, $message);
         $insert->execute();
     }
 
     $stmt->close();
 }
 
-// Check and insert overdue notifications
+// Fetch vehicles with overdue contracts
 $overdueQuery = "SELECT id, target_name, equipment_type, days_lapses 
                  FROM devices 
                  WHERE days_lapses >= 1"; // Notify only if days_lapses >= 1
 $overdueResult = $conn->query($overdueQuery);
 
+$overdueVehicles = [];
 while ($row = $overdueResult->fetch_assoc()) {
-    $msg = "🚨 Vehicle <b>{$row['target_name']}</b> ({$row['equipment_type']}) is overdue!";
-    insertNotification($conn, $row['id'], 'overdue', $msg);
+    $overdueVehicles[$row['id']] = $row;
 }
 
-// Check and insert maintenance notifications
+// Fetch vehicles with maintenance issues
 $maintenanceQuery = "SELECT id, target_name, equipment_type 
                      FROM devices 
                      WHERE physical_status = 'Breakdown'";
 $maintenanceResult = $conn->query($maintenanceQuery);
 
+$maintenanceVehicles = [];
 while ($row = $maintenanceResult->fetch_assoc()) {
-    $msg = "🛠 Vehicle <b>{$row['target_name']}</b> ({$row['equipment_type']}) needs maintenance.";
-    insertNotification($conn, $row['id'], 'maintenance', $msg);
+    $maintenanceVehicles[$row['id']] = $row;
+}
+
+// Combine notifications for vehicles with both overdue and maintenance issues
+$notifications = [];
+foreach ($overdueVehicles as $id => $vehicle) {
+    if (isset($maintenanceVehicles[$id])) {
+        // Vehicle has both overdue and maintenance issues
+        $msg = "🚨🛠 Vehicle <b>{$vehicle['target_name']}</b> ({$vehicle['equipment_type']}) has an overdue contract and requires maintenance.";
+        insertNotification($conn, $id, $msg);
+        unset($maintenanceVehicles[$id]); // Remove from maintenance list to avoid duplication
+    } else {
+        // Vehicle has only overdue issues
+        $msg = "🚨 Vehicle <b>{$vehicle['target_name']}</b> ({$vehicle['equipment_type']}) has an overdue contract.";
+        insertNotification($conn, $id, $msg);
+    }
+}
+
+// Add remaining vehicles with only maintenance issues
+foreach ($maintenanceVehicles as $id => $vehicle) {
+    $msg = "🛠 Vehicle <b>{$vehicle['target_name']}</b> ({$vehicle['equipment_type']}) requires maintenance.";
+    insertNotification($conn, $id, $msg);
 }
 
 // Fetch grouped notifications with additional fields
-$notifications = [
-    'overdue' => [],
-    'maintenance' => []
-];
-
 $notifQuery = "
-    SELECT n.type, n.message, d.target_name, d.equipment_type 
+    SELECT n.message, d.target_name, d.equipment_type 
     FROM notifications n 
     JOIN devices d ON n.vehicle_id = d.id 
     WHERE n.is_read = 0 
@@ -55,24 +71,17 @@ $notifQuery = "
 ";
 
 $result = $conn->query($notifQuery);
+$notifications = [];
 while ($row = $result->fetch_assoc()) {
-    if ($row['type'] === 'overdue') {
-        $notifications['overdue'][] = [
-            'type' => $row['type'],
-            'message' => $row['message'],
-            'target_name' => $row['target_name'],
-            'equipment_type' => $row['equipment_type']
-        ];
-    } elseif ($row['type'] === 'maintenance') {
-        $notifications['maintenance'][] = [
-            'type' => $row['type'],
-            'message' => $row['message'],
-            'target_name' => $row['target_name'],
-            'equipment_type' => $row['equipment_type']
-        ];
-    }
+    $notifications[] = [
+        'message' => $row['message'],
+        'target_name' => $row['target_name'],
+        'equipment_type' => $row['equipment_type']
+    ];
 }
 
 header('Content-Type: application/json');
 echo json_encode($notifications);
+
+$conn->close();
 ?>
